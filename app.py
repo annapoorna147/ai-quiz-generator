@@ -1,45 +1,35 @@
 import streamlit as st
 import random
 
-# Page configuration
+# -----------------------------
+# Page Configuration
+# -----------------------------
 st.set_page_config(
     page_title="AI Quiz Generator",
-    page_icon="🧠"
+    page_icon="🧠",
+    layout="centered"
 )
 
+# -----------------------------
 # Title
+# -----------------------------
 st.title("🧠 AI Quiz Generator")
 st.write("Create a quiz on any topic.")
 
-# Topic
-topic = st.text_input("Enter a topic")
-
-# Difficulty
-difficulty = st.selectbox(
-    "Select difficulty",
-    ["Easy", "Medium", "Hard"]
-)
-
-# Number of questions
-num_questions = st.slider(
-    "Number of questions",
-    min_value=1,
-    max_value=10,
-    value=5
-)
-
-# Sample questions
-quiz_data = {
+# -----------------------------
+# Sample Question Database
+# -----------------------------
+quiz_database = {
     "python": [
         {
             "question": "Which keyword is used to define a function in Python?",
-            "options": ["func", "def", "function", "define"],
+            "options": ["function", "def", "fun", "define"],
             "answer": "def"
         },
         {
             "question": "Which data type is used to store True or False?",
-            "options": ["int", "str", "bool", "float"],
-            "answer": "bool"
+            "options": ["String", "Integer", "Boolean", "Float"],
+            "answer": "Boolean"
         },
         {
             "question": "Which symbol is used for comments in Python?",
@@ -47,65 +37,199 @@ quiz_data = {
             "answer": "#"
         },
         {
+            "question": "Which collection is ordered and changeable?",
+            "options": ["Set", "Tuple", "List", "Dictionary"],
+            "answer": "List"
+        },
+        {
             "question": "Which function is used to display output in Python?",
             "options": ["display()", "show()", "print()", "output()"],
             "answer": "print()"
         },
         {
-            "question": "Which collection is ordered and changeable?",
-            "options": ["Set", "Tuple", "List", "Dictionary"],
-            "answer": "List"
+            "question": "What is the extension of a Python file?",
+            "options": [".java", ".py", ".python", ".pt"],
+            "answer": ".py"
+        },
+        {
+            "question": "Which operator is used for exponentiation in Python?",
+            "options": ["^", "**", "//", "%%"],
+            "answer": "**"
+        },
+        {
+            "question": "Which keyword is used to create a loop over a sequence?",
+            "options": ["loop", "repeat", "for", "while"],
+            "answer": "for"
+        },
+        {
+            "question": "Which function returns the length of a list?",
+            "options": ["size()", "length()", "count()", "len()"],
+            "answer": "len()"
+        },
+        {
+            "question": "Which keyword is used to import a module?",
+            "options": ["include", "import", "using", "module"],
+            "answer": "import"
         }
     ]
 }
 
-# Generate quiz
+# -----------------------------
+# User Inputs
+# -----------------------------
+topic = st.text_input(
+    "Enter a topic",
+    placeholder="Example: Python"
+)
+
+difficulty = st.selectbox(
+    "Select difficulty",
+    ["Easy", "Medium", "Hard"]
+)
+
+num_questions = st.slider(
+    "Number of questions",
+    min_value=1,
+    max_value=10,
+    value=5
+)
+
+# -----------------------------
+# Generate Quiz
+# -----------------------------
 if st.button("Generate Quiz"):
 
-    if not topic:
-        st.warning("Please enter a topic first.")
+    topic_key = topic.strip().lower()
 
-    elif topic.lower().strip() == "python":
+    if not topic_key:
+        st.warning("⚠️ Please enter a topic.")
+    
+    elif topic_key not in quiz_database:
+        st.info(
+            "Currently, sample questions are available for Python. "
+            "More topics will be added soon! 😊"
+        )
 
-        questions = quiz_data["python"]
+    else:
+        questions = quiz_database[topic_key].copy()
 
         # Randomize questions
         random.shuffle(questions)
 
-        questions = questions[:min(num_questions, len(questions))]
+        # Select requested number
+        questions = questions[:num_questions]
 
+        # Store quiz in session
         st.session_state.questions = questions
         st.session_state.quiz_started = True
-        st.session_state.score = 0
+        st.session_state.submitted = False
 
-    else:
-        st.info(
-            "Currently, sample questions are available for Python. "
-            "More topics will be added soon!"
-        )
-
-# Display quiz
+# -----------------------------
+# Display Quiz
+# -----------------------------
 if st.session_state.get("quiz_started", False):
 
-    st.subheader(f"📝 {topic.title()} Quiz")
+    st.divider()
 
-    score = 0
+    st.subheader("📝 Your Quiz")
 
+    # Display questions
     for i, question in enumerate(st.session_state.questions):
 
-        st.write(f"### Question {i + 1}")
-        st.write(question["question"])
+        st.markdown(
+            f"### Question {i + 1}: {question['question']}"
+        )
 
-        selected = st.radio(
-            "Choose your answer:",
+        st.radio(
+            "Select your answer:",
             question["options"],
             key=f"question_{i}"
         )
 
-        if selected == question["answer"]:
-            score += 1
+        st.write("")
 
+    # -------------------------
+    # Submit Quiz
+    # -------------------------
     if st.button("Check Score"):
+
+        score = 0
+
+        for i, question in enumerate(st.session_state.questions):
+
+            selected_answer = st.session_state.get(
+                f"question_{i}"
+            )
+
+            if selected_answer == question["answer"]:
+                score += 1
+
+        total = len(st.session_state.questions)
+
+        st.session_state.score = score
+        st.session_state.submitted = True
+
+    # -------------------------
+    # Show Result
+    # -------------------------
+    if st.session_state.get("submitted", False):
+
+        score = st.session_state.score
+        total = len(st.session_state.questions)
+
+        percentage = (score / total) * 100
+
+        st.divider()
+
+        st.subheader("🎉 Quiz Result")
+
         st.success(
-            f"🎉 Your Score: {score}/{len(st.session_state.questions)}"
+            f"Your Score: {score}/{total}"
         )
+
+        st.write(
+            f"Percentage: **{percentage:.0f}%**"
+        )
+
+        if percentage == 100:
+            st.balloons()
+            st.success("🏆 Perfect score! Excellent work!")
+
+        elif percentage >= 70:
+            st.success("👏 Great job! Keep learning!")
+
+        elif percentage >= 40:
+            st.warning("👍 Good attempt! You can improve!")
+
+        else:
+            st.error("💪 Keep practicing. You will get better!")
+
+        # -------------------------
+        # Show Correct Answers
+        # -------------------------
+        st.subheader("📚 Correct Answers")
+
+        for i, question in enumerate(st.session_state.questions):
+
+            selected_answer = st.session_state.get(
+                f"question_{i}"
+            )
+
+            if selected_answer == question["answer"]:
+                st.write(
+                    f"✅ **Q{i + 1}:** {question['answer']}"
+                )
+            else:
+                st.write(
+                    f"❌ **Q{i + 1}:** Correct answer → "
+                    f"**{question['answer']}**"
+                )
+
+# -----------------------------
+# Footer
+# -----------------------------
+st.divider()
+
+st.caption(
+    "🧠 AI Quiz Generator | Built with Python & Streamlit"
+)
