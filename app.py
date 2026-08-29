@@ -2,9 +2,12 @@ import streamlit as st
 import os
 import json
 import re
+import time
+
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+
 
 # =========================================================
 # LOAD ENVIRONMENT VARIABLES
@@ -16,7 +19,7 @@ API_KEY = os.getenv("GEMINI_API_KEY")
 
 
 # =========================================================
-# PAGE CONFIGURATION
+# PAGE CONFIG
 # =========================================================
 
 st.set_page_config(
@@ -35,8 +38,8 @@ st.markdown(
     <style>
 
     .main-title {
-        font-size: 42px;
-        font-weight: bold;
+        font-size: 44px;
+        font-weight: 800;
         text-align: center;
         margin-bottom: 5px;
     }
@@ -47,10 +50,19 @@ st.markdown(
         margin-bottom: 30px;
     }
 
-    .question-box {
-        padding: 15px;
-        border-radius: 10px;
-        margin-bottom: 10px;
+    .info-card {
+        padding: 18px;
+        border-radius: 12px;
+        border: 1px solid rgba(128, 128, 128, 0.25);
+        margin-bottom: 20px;
+    }
+
+    .result-card {
+        padding: 25px;
+        border-radius: 15px;
+        text-align: center;
+        border: 1px solid rgba(128, 128, 128, 0.25);
+        margin: 20px 0;
     }
 
     </style>
@@ -69,7 +81,7 @@ st.markdown(
 )
 
 st.markdown(
-    '<div class="subtitle">Generate an intelligent quiz on any topic using Gemini AI</div>',
+    '<div class="subtitle">Learn • Practice • Improve</div>',
     unsafe_allow_html=True
 )
 
@@ -80,19 +92,17 @@ st.markdown(
 
 if not API_KEY:
 
-    st.error(
-        "❌ Gemini API key not found."
-    )
+    st.error("❌ Gemini API key not found.")
 
     st.info(
-        "Make sure your .env file contains: GEMINI_API_KEY=your_key"
+        "Add GEMINI_API_KEY=your_key_here to your .env file."
     )
 
     st.stop()
 
 
 # =========================================================
-# CREATE GEMINI CLIENT
+# GEMINI CLIENT
 # =========================================================
 
 try:
@@ -106,9 +116,7 @@ try:
 
 except Exception as e:
 
-    st.error(
-        f"❌ Could not connect to Gemini: {e}"
-    )
+    st.error(f"❌ Gemini connection failed: {e}")
 
     st.stop()
 
@@ -126,33 +134,14 @@ if "submitted" not in st.session_state:
 if "score" not in st.session_state:
     st.session_state.score = 0
 
+if "quiz_started" not in st.session_state:
+    st.session_state.quiz_started = False
 
-# =========================================================
-# QUIZ SETTINGS
-# =========================================================
+if "start_time" not in st.session_state:
+    st.session_state.start_time = None
 
-st.subheader("⚙️ Quiz Settings")
-
-topic = st.text_input(
-    "📚 Enter Topic",
-    placeholder="Example: Python Programming"
-)
-
-difficulty = st.selectbox(
-    "🎯 Difficulty",
-    [
-        "Easy",
-        "Medium",
-        "Hard"
-    ]
-)
-
-number_of_questions = st.slider(
-    "🔢 Number of Questions",
-    min_value=3,
-    max_value=10,
-    value=5
-)
+if "quiz_duration" not in st.session_state:
+    st.session_state.quiz_duration = 300
 
 
 # =========================================================
@@ -194,12 +183,12 @@ Rules:
 
 1. Create exactly {number_of_questions} questions.
 2. Every question must have exactly 4 options.
-3. The answer must exactly match one of the four options.
-4. Questions must be related to {topic}.
-5. Follow the {difficulty} difficulty level.
-6. Give a short explanation for every answer.
+3. The answer must exactly match one option.
+4. Questions must be relevant to {topic}.
+5. Match the {difficulty} difficulty.
+6. Give a short explanation.
 7. Do not use Markdown.
-8. Do not add any text before or after the JSON.
+8. Do not add text outside the JSON.
 9. Return JSON only.
 """
 
@@ -218,7 +207,7 @@ Rules:
 
         text = response.text.strip()
 
-        # Remove Markdown code fences if Gemini adds them
+        # Remove markdown code fences
         text = re.sub(
             r"```json",
             "",
@@ -234,7 +223,7 @@ Rules:
 
         text = text.strip()
 
-        # Find JSON array
+        # Extract JSON array
         start = text.find("[")
         end = text.rfind("]")
 
@@ -248,7 +237,6 @@ Rules:
 
         questions = json.loads(text)
 
-        # Validate questions
         if not isinstance(questions, list):
 
             raise ValueError(
@@ -262,18 +250,26 @@ Rules:
                 f"but received {len(questions)}."
             )
 
+        # Validate every question
         for question in questions:
 
             if "question" not in question:
-                raise ValueError("Question text is missing.")
+                raise ValueError(
+                    "Question text is missing."
+                )
 
             if "options" not in question:
-                raise ValueError("Options are missing.")
+                raise ValueError(
+                    "Options are missing."
+                )
 
             if "answer" not in question:
-                raise ValueError("Answer is missing.")
+                raise ValueError(
+                    "Answer is missing."
+                )
 
             if "explanation" not in question:
+
                 question["explanation"] = (
                     "This is the correct answer."
                 )
@@ -281,13 +277,13 @@ Rules:
             if len(question["options"]) != 4:
 
                 raise ValueError(
-                    "Each question must have exactly 4 options."
+                    "Each question must have 4 options."
                 )
 
             if question["answer"] not in question["options"]:
 
                 raise ValueError(
-                    "Correct answer does not match an option."
+                    "Answer does not match an option."
                 )
 
         return questions, None
@@ -298,63 +294,186 @@ Rules:
 
 
 # =========================================================
-# GENERATE QUIZ BUTTON
+# QUIZ GENERATION SETTINGS
 # =========================================================
 
-if st.button(
-    "🚀 Generate Quiz",
-    type="primary"
-):
+if not st.session_state.questions:
 
-    if not topic.strip():
+    st.subheader("⚙️ Create Your Quiz")
 
-        st.warning(
-            "⚠️ Please enter a topic first."
-        )
+    topic = st.text_input(
+        "📚 Topic",
+        placeholder="Example: Python Programming"
+    )
 
-    else:
+    difficulty = st.selectbox(
+        "🎯 Difficulty",
+        [
+            "Easy",
+            "Medium",
+            "Hard"
+        ]
+    )
 
-        # Reset previous quiz
-        st.session_state.questions = []
-        st.session_state.submitted = False
-        st.session_state.score = 0
+    number_of_questions = st.slider(
+        "🔢 Number of Questions",
+        min_value=3,
+        max_value=10,
+        value=5
+    )
 
-        with st.spinner(
-            "🧠 Gemini is creating your quiz..."
-        ):
+    st.markdown("### ⏱️ Quiz Time")
 
-            questions, error = generate_quiz(
-                topic,
-                difficulty,
-                number_of_questions
-            )
+    time_per_question = st.selectbox(
+        "Time per question",
+        [
+            30,
+            60,
+            90,
+            120
+        ],
+        index=1,
+        format_func=lambda x: f"{x} seconds"
+    )
 
-        if questions:
+    if st.button(
+        "🚀 Generate Quiz",
+        type="primary",
+        use_container_width=True
+    ):
 
-            st.session_state.questions = questions
+        if not topic.strip():
 
-            st.success(
-                "🎉 Quiz generated successfully!"
+            st.warning(
+                "⚠️ Please enter a topic first."
             )
 
         else:
 
-            st.error(
-                "❌ Could not generate the quiz."
-            )
+            with st.spinner(
+                "🧠 Gemini is creating your quiz..."
+            ):
 
-            st.code(
-                error
-                if error
-                else "Unknown error."
-            )
+                questions, error = generate_quiz(
+                    topic.strip(),
+                    difficulty,
+                    number_of_questions
+                )
+
+            if questions:
+
+                st.session_state.questions = questions
+
+                st.session_state.quiz_duration = (
+                    number_of_questions * time_per_question
+                )
+
+                st.session_state.start_time = time.time()
+
+                st.session_state.quiz_started = True
+
+                st.session_state.submitted = False
+
+                st.session_state.score = 0
+
+                st.rerun()
+
+            else:
+
+                st.error(
+                    "❌ Could not generate the quiz."
+                )
+
+                st.code(
+                    error if error else "Unknown error."
+                )
 
 
 # =========================================================
-# DISPLAY QUIZ
+# ACTIVE QUIZ
 # =========================================================
 
-if st.session_state.questions:
+if (
+    st.session_state.questions
+    and not st.session_state.submitted
+):
+
+    total_questions = len(
+        st.session_state.questions
+    )
+
+    # -----------------------------------------------------
+    # TIMER
+    # -----------------------------------------------------
+
+    elapsed_time = (
+        time.time()
+        - st.session_state.start_time
+    )
+
+    remaining_time = max(
+        0,
+        st.session_state.quiz_duration
+        - int(elapsed_time)
+    )
+
+    minutes = remaining_time // 60
+    seconds = remaining_time % 60
+
+    # -----------------------------------------------------
+    # TIMER DISPLAY
+    # -----------------------------------------------------
+
+    if remaining_time > 60:
+
+        st.info(
+            f"⏱️ Time remaining: "
+            f"{minutes:02d}:{seconds:02d}"
+        )
+
+    elif remaining_time > 0:
+
+        st.warning(
+            f"⚠️ Time remaining: "
+            f"{minutes:02d}:{seconds:02d}"
+        )
+
+    else:
+
+        st.error(
+            "⏰ Time's up! Submit your quiz."
+        )
+
+
+    # -----------------------------------------------------
+    # PROGRESS
+    # -----------------------------------------------------
+
+    answered_questions = 0
+
+    for i in range(total_questions):
+
+        if st.session_state.get(
+            f"answer_{i}"
+        ) is not None:
+
+            answered_questions += 1
+
+    progress = (
+        answered_questions / total_questions
+    )
+
+    st.progress(progress)
+
+    st.caption(
+        f"Progress: "
+        f"{answered_questions}/{total_questions} answered"
+    )
+
+
+    # -----------------------------------------------------
+    # QUIZ QUESTIONS
+    # -----------------------------------------------------
 
     st.divider()
 
@@ -365,7 +484,7 @@ if st.session_state.questions:
     ):
 
         st.markdown(
-            f"### Question {i + 1}"
+            f"### Question {i + 1} of {total_questions}"
         )
 
         st.write(
@@ -379,16 +498,17 @@ if st.session_state.questions:
             key=f"answer_{i}"
         )
 
+        st.divider()
 
-    # =====================================================
-    # CHECK ANSWERS
-    # =====================================================
 
-    st.divider()
+    # -----------------------------------------------------
+    # SUBMIT
+    # -----------------------------------------------------
 
     if st.button(
         "✅ Submit Quiz",
-        type="primary"
+        type="primary",
+        use_container_width=True
     ):
 
         score = 0
@@ -401,27 +521,40 @@ if st.session_state.questions:
                 f"answer_{i}"
             )
 
-            if selected_answer is None:
-
-                continue
-
             if selected_answer == question["answer"]:
 
                 score += 1
 
         st.session_state.score = score
+
         st.session_state.submitted = True
 
+        st.rerun()
+
+
+    # -----------------------------------------------------
+    # AUTO REFRESH TIMER
+    # -----------------------------------------------------
+
+    if remaining_time > 0:
+
+        time.sleep(1)
+
+        st.rerun()
+
 
 # =========================================================
-# SHOW RESULTS
+# RESULTS
 # =========================================================
 
-if st.session_state.submitted:
+if (
+    st.session_state.questions
+    and st.session_state.submitted
+):
 
-    total = len(
-        st.session_state.questions
-    )
+    questions = st.session_state.questions
+
+    total = len(questions)
 
     score = st.session_state.score
 
@@ -429,12 +562,22 @@ if st.session_state.submitted:
         score / total
     ) * 100
 
+
+    # -----------------------------------------------------
+    # RESULT HEADER
+    # -----------------------------------------------------
+
     st.divider()
 
-    st.subheader("🏆 Quiz Results")
+    st.markdown(
+        '<div class="result-card">',
+        unsafe_allow_html=True
+    )
+
+    st.subheader("🏆 Quiz Completed!")
 
     st.metric(
-        "Your Score",
+        "Score",
         f"{score} / {total}"
     )
 
@@ -443,44 +586,78 @@ if st.session_state.submitted:
         f"{percentage:.0f}%"
     )
 
-    if percentage >= 80:
+    st.markdown(
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+
+    # -----------------------------------------------------
+    # PERFORMANCE MESSAGE
+    # -----------------------------------------------------
+
+    if percentage >= 90:
 
         st.success(
-            "🌟 Excellent! You really know this topic!"
+            "🌟 Outstanding! You're a quiz master!"
         )
 
         st.balloons()
 
+    elif percentage >= 75:
+
+        st.success(
+            "🎉 Excellent work! Keep it up!"
+        )
+
     elif percentage >= 60:
 
         st.info(
-            "👏 Good job! Keep practicing."
+            "👍 Good job! A little more practice will help."
+        )
+
+    elif percentage >= 40:
+
+        st.warning(
+            "📚 Keep practicing. You're getting there!"
         )
 
     else:
 
-        st.warning(
-            "💪 Keep learning and try again!"
+        st.error(
+            "💪 Don't give up! Review the answers and try again."
         )
 
 
-    # =====================================================
+    # -----------------------------------------------------
+    # PERFORMANCE BAR
+    # -----------------------------------------------------
+
+    st.subheader("📊 Performance")
+
+    st.progress(
+        percentage / 100
+    )
+
+
+    # -----------------------------------------------------
     # ANSWER REVIEW
-    # =====================================================
+    # -----------------------------------------------------
 
     st.subheader("📖 Answer Review")
 
-    for i, question in enumerate(
-        st.session_state.questions
-    ):
+    for i, question in enumerate(questions):
 
         selected_answer = st.session_state.get(
             f"answer_{i}"
         )
 
         st.markdown(
-            f"**Question {i + 1}:** "
-            f"{question['question']}"
+            f"### Question {i + 1}"
+        )
+
+        st.write(
+            question["question"]
         )
 
         if selected_answer == question["answer"]:
@@ -507,10 +684,35 @@ if st.session_state.submitted:
         st.divider()
 
 
+    # -----------------------------------------------------
+    # RESTART
+    # -----------------------------------------------------
+
+    if st.button(
+        "🔄 Create Another Quiz",
+        type="primary",
+        use_container_width=True
+    ):
+
+        st.session_state.questions = []
+
+        st.session_state.submitted = False
+
+        st.session_state.score = 0
+
+        st.session_state.quiz_started = False
+
+        st.session_state.start_time = None
+
+        st.rerun()
+
+
 # =========================================================
 # FOOTER
 # =========================================================
 
+st.markdown("---")
+
 st.caption(
-    "Built with Python 🐍 • Streamlit • Gemini AI"
+    "🧠 AI Quiz Generator • Python • Streamlit • Gemini AI"
 )
