@@ -10,7 +10,7 @@ from google.genai import types
 
 
 # =========================================================
-# CONFIGURATION
+# PAGE CONFIG
 # =========================================================
 
 st.set_page_config(
@@ -21,7 +21,7 @@ st.set_page_config(
 
 
 # =========================================================
-# LOAD API KEY
+# LOAD ENVIRONMENT
 # =========================================================
 
 load_dotenv()
@@ -63,7 +63,6 @@ st.markdown(
         font-size: 46px;
         font-weight: 800;
         text-align: center;
-        margin-top: 10px;
         margin-bottom: 5px;
     }
 
@@ -73,20 +72,16 @@ st.markdown(
         margin-bottom: 30px;
     }
 
-    .dashboard-card {
-        padding: 20px;
-        border-radius: 16px;
+    .quiz-card {
+        padding: 25px;
+        border-radius: 18px;
         border: 1px solid rgba(128,128,128,0.25);
-        margin-bottom: 20px;
+        margin: 20px 0;
     }
 
-    .feature-title {
-        font-size: 22px;
-        font-weight: 700;
-    }
-
-    .small-text {
-        font-size: 14px;
+    .question-number {
+        font-size: 15px;
+        font-weight: 600;
     }
 
     </style>
@@ -110,9 +105,11 @@ defaults = {
     "difficulty": "Medium",
     "number_of_questions": 5,
     "time_per_question": 60,
+    "current_question": 0,
 }
 
 for key, value in defaults.items():
+
     if key not in st.session_state:
         st.session_state[key] = value
 
@@ -133,7 +130,7 @@ st.markdown(
 
 
 # =========================================================
-# QUIZ GENERATION FUNCTION
+# GENERATE QUIZ
 # =========================================================
 
 def generate_quiz(
@@ -182,7 +179,7 @@ Rules:
 7. Give a short explanation.
 8. Return JSON only.
 9. Do not use Markdown.
-10. Do not add any text before or after the JSON.
+10. Do not add text outside the JSON.
 """
 
     try:
@@ -200,6 +197,7 @@ Rules:
 
         text = response.text.strip()
 
+        # Remove Markdown code fences
         text = re.sub(
             r"```json",
             "",
@@ -215,10 +213,12 @@ Rules:
 
         text = text.strip()
 
+        # Find JSON array
         start = text.find("[")
         end = text.rfind("]")
 
         if start == -1 or end == -1:
+
             raise ValueError(
                 "Gemini did not return valid JSON."
             )
@@ -228,16 +228,19 @@ Rules:
         questions = json.loads(text)
 
         if not isinstance(questions, list):
+
             raise ValueError(
                 "Invalid quiz format."
             )
 
         if len(questions) != number_of_questions:
+
             raise ValueError(
                 f"Expected {number_of_questions} questions "
                 f"but received {len(questions)}."
             )
 
+        # Validate questions
         for question in questions:
 
             if "question" not in question:
@@ -256,16 +259,19 @@ Rules:
                 )
 
             if "explanation" not in question:
+
                 question["explanation"] = (
                     "This is the correct answer."
                 )
 
             if len(question["options"]) != 4:
+
                 raise ValueError(
                     "Every question must have exactly 4 options."
                 )
 
             if question["answer"] not in question["options"]:
+
                 raise ValueError(
                     "Correct answer does not match an option."
                 )
@@ -285,14 +291,15 @@ if not st.session_state.questions:
 
     st.markdown(
         """
-        <div class="dashboard-card">
-        <div class="feature-title">
-        🚀 Create Your AI-Powered Quiz
-        </div>
+        <div class="quiz-card">
+
+        <h3>🚀 Create Your AI-Powered Quiz</h3>
+
         <p>
         Choose a topic, difficulty and quiz size.
         Gemini AI will generate a personalized quiz for you.
         </p>
+
         </div>
         """,
         unsafe_allow_html=True
@@ -333,8 +340,11 @@ if not st.session_state.questions:
     )
 
     if custom_topic.strip():
+
         final_topic = custom_topic.strip()
+
     else:
+
         final_topic = category_topic
 
 
@@ -362,13 +372,18 @@ if not st.session_state.questions:
 
         number_of_questions = st.selectbox(
             "🔢 Questions",
-            [3, 5, 7, 10],
+            [
+                3,
+                5,
+                7,
+                10
+            ],
             index=1
         )
 
 
     # =====================================================
-    # TIMER SETTINGS
+    # TIMER
     # =====================================================
 
     st.subheader("⏱️ Time Settings")
@@ -385,14 +400,12 @@ if not st.session_state.questions:
         format_func=lambda x: f"{x} seconds"
     )
 
-
     total_time = (
         number_of_questions
         * time_per_question
     )
 
     minutes = total_time // 60
-
     seconds = total_time % 60
 
     st.info(
@@ -431,7 +444,6 @@ if not st.session_state.questions:
 
             if questions:
 
-                # Save quiz information
                 st.session_state.questions = questions
 
                 st.session_state.topic = final_topic
@@ -458,9 +470,7 @@ if not st.session_state.questions:
 
                 st.session_state.score = 0
 
-                st.success(
-                    "🎉 Quiz generated successfully!"
-                )
+                st.session_state.current_question = 0
 
                 st.rerun()
 
@@ -490,6 +500,23 @@ if (
 
     total_questions = len(questions)
 
+    current = st.session_state.current_question
+
+    # Safety check
+    if current < 0:
+
+        current = 0
+
+        st.session_state.current_question = 0
+
+    if current >= total_questions:
+
+        current = total_questions - 1
+
+        st.session_state.current_question = (
+            total_questions - 1
+        )
+
 
     # =====================================================
     # QUIZ HEADER
@@ -510,7 +537,7 @@ if (
     with col2:
 
         st.caption(
-            f"🔢 {total_questions} Questions"
+            f"Question {current + 1} of {total_questions}"
         )
 
 
@@ -551,7 +578,7 @@ if (
     else:
 
         st.error(
-            "⏰ Time's up! Submit your quiz."
+            "⏰ Time's up! Please submit your quiz."
         )
 
 
@@ -559,89 +586,137 @@ if (
     # PROGRESS
     # =====================================================
 
-    answered_questions = 0
-
-    for i in range(total_questions):
-
-        if st.session_state.get(
-            f"answer_{i}"
-        ) is not None:
-
-            answered_questions += 1
-
-
     progress = (
-        answered_questions
+        (current + 1)
         / total_questions
     )
-
 
     st.progress(progress)
 
     st.caption(
-        f"Progress: "
-        f"{answered_questions}/{total_questions} answered"
+        f"Quiz Progress: "
+        f"{current + 1}/{total_questions}"
     )
 
 
     # =====================================================
-    # QUESTIONS
+    # QUESTION CARD
+    # =====================================================
+
+    question = questions[current]
+
+    st.markdown(
+        '<div class="quiz-card">',
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        f"### Question {current + 1}"
+    )
+
+    st.write(
+        question["question"]
+    )
+
+    st.markdown(
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+
+    # =====================================================
+    # ANSWER
+    # =====================================================
+
+    st.radio(
+        "Choose your answer:",
+        question["options"],
+        index=None,
+        key=f"answer_{current}"
+    )
+
+
+    # =====================================================
+    # NAVIGATION
     # =====================================================
 
     st.divider()
 
-    st.subheader("📝 Answer the Questions")
+    nav1, nav2, nav3 = st.columns(
+        [1, 1, 1]
+    )
+
+    with nav1:
+
+        if current > 0:
+
+            if st.button(
+                "⬅️ Previous",
+                use_container_width=True
+            ):
+
+                st.session_state.current_question -= 1
+
+                st.rerun()
 
 
-    for i, question in enumerate(questions):
-
-        st.markdown(
-            f"### Question {i + 1}"
-        )
+    with nav2:
 
         st.write(
-            question["question"]
+            f"**{current + 1} / {total_questions}**"
         )
 
-        st.radio(
-            "Choose your answer:",
-            question["options"],
-            index=None,
-            key=f"answer_{i}"
-        )
 
-        if i != total_questions - 1:
-            st.divider()
+    with nav3:
+
+        if current < total_questions - 1:
+
+            if st.button(
+                "Next ➡️",
+                use_container_width=True
+            ):
+
+                st.session_state.current_question += 1
+
+                st.rerun()
 
 
     # =====================================================
     # SUBMIT BUTTON
     # =====================================================
 
-    st.divider()
+    if current == total_questions - 1:
 
-    if st.button(
-        "✅ Submit Quiz",
-        type="primary",
-        use_container_width=True
-    ):
+        st.markdown("")
 
-        score = 0
+        if st.button(
+            "🏁 Submit Quiz",
+            type="primary",
+            use_container_width=True
+        ):
 
-        for i, question in enumerate(questions):
+            score = 0
 
-            selected_answer = st.session_state.get(
-                f"answer_{i}"
-            )
+            for i, q in enumerate(questions):
 
-            if selected_answer == question["answer"]:
-                score += 1
+                selected_answer = (
+                    st.session_state.get(
+                        f"answer_{i}"
+                    )
+                )
 
-        st.session_state.score = score
+                if (
+                    selected_answer
+                    == q["answer"]
+                ):
 
-        st.session_state.submitted = True
+                    score += 1
 
-        st.rerun()
+            st.session_state.score = score
+
+            st.session_state.submitted = True
+
+            st.rerun()
 
 
     # =====================================================
@@ -676,14 +751,12 @@ if (
 
 
     # =====================================================
-    # RESULT
+    # RESULTS HEADER
     # =====================================================
 
     st.divider()
 
-    st.markdown(
-        "## 🏆 Quiz Results"
-    )
+    st.markdown("## 🏆 Quiz Results")
 
     col1, col2, col3 = st.columns(3)
 
@@ -704,12 +777,19 @@ if (
     with col3:
 
         if percentage >= 80:
+
             grade = "A"
+
         elif percentage >= 60:
+
             grade = "B"
+
         elif percentage >= 40:
+
             grade = "C"
+
         else:
+
             grade = "D"
 
         st.metric(
@@ -719,7 +799,7 @@ if (
 
 
     # =====================================================
-    # PERFORMANCE MESSAGE
+    # PERFORMANCE
     # =====================================================
 
     if percentage >= 90:
@@ -772,11 +852,12 @@ if (
 
     st.subheader("📖 Answer Review")
 
-
     for i, question in enumerate(questions):
 
-        selected_answer = st.session_state.get(
-            f"answer_{i}"
+        selected_answer = (
+            st.session_state.get(
+                f"answer_{i}"
+            )
         )
 
         st.markdown(
@@ -835,6 +916,8 @@ if (
         st.session_state.quiz_started = False
 
         st.session_state.start_time = None
+
+        st.session_state.current_question = 0
 
         st.rerun()
 
