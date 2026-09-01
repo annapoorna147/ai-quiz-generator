@@ -45,7 +45,6 @@ try:
             timeout=30000
         )
     )
-
 except Exception as e:
     st.error(f"❌ Gemini connection failed: {e}")
     st.stop()
@@ -79,9 +78,22 @@ st.markdown(
         margin: 20px 0;
     }
 
-    .question-number {
-        font-size: 15px;
-        font-weight: 600;
+    .result-card {
+        padding: 25px;
+        border-radius: 18px;
+        border: 1px solid rgba(128,128,128,0.25);
+        margin: 20px 0;
+        text-align: center;
+    }
+
+    .big-score {
+        font-size: 52px;
+        font-weight: 800;
+    }
+
+    .performance-text {
+        font-size: 22px;
+        font-weight: 700;
     }
 
     </style>
@@ -197,7 +209,6 @@ Rules:
 
         text = response.text.strip()
 
-        # Remove Markdown code fences
         text = re.sub(
             r"```json",
             "",
@@ -213,7 +224,6 @@ Rules:
 
         text = text.strip()
 
-        # Find JSON array
         start = text.find("[")
         end = text.rfind("]")
 
@@ -240,7 +250,6 @@ Rules:
                 f"but received {len(questions)}."
             )
 
-        # Validate questions
         for question in questions:
 
             if "question" not in question:
@@ -332,7 +341,6 @@ if not st.session_state.questions:
         placeholder="Example: Operating Systems"
     )
 
-    # Remove emoji from category
     category_topic = re.sub(
         r"^[^\w\s]+ ",
         "",
@@ -415,7 +423,7 @@ if not st.session_state.questions:
 
 
     # =====================================================
-    # GENERATE BUTTON
+    # GENERATE
     # =====================================================
 
     if st.button(
@@ -502,7 +510,8 @@ if (
 
     current = st.session_state.current_question
 
-    # Safety check
+
+    # Safety
     if current < 0:
 
         current = 0
@@ -519,7 +528,7 @@ if (
 
 
     # =====================================================
-    # QUIZ HEADER
+    # HEADER
     # =====================================================
 
     st.markdown(
@@ -600,7 +609,7 @@ if (
 
 
     # =====================================================
-    # QUESTION CARD
+    # QUESTION
     # =====================================================
 
     question = questions[current]
@@ -682,12 +691,10 @@ if (
 
 
     # =====================================================
-    # SUBMIT BUTTON
+    # SUBMIT
     # =====================================================
 
     if current == total_questions - 1:
-
-        st.markdown("")
 
         if st.button(
             "🏁 Submit Quiz",
@@ -705,10 +712,7 @@ if (
                     )
                 )
 
-                if (
-                    selected_answer
-                    == q["answer"]
-                ):
+                if selected_answer == q["answer"]:
 
                     score += 1
 
@@ -731,7 +735,7 @@ if (
 
 
 # =========================================================
-# RESULTS
+# DAY 6 PERFORMANCE DASHBOARD
 # =========================================================
 
 if (
@@ -745,112 +749,17 @@ if (
 
     score = st.session_state.score
 
-    percentage = (
-        score / total
-    ) * 100
-
 
     # =====================================================
-    # RESULTS HEADER
+    # CALCULATE PERFORMANCE
     # =====================================================
 
-    st.divider()
+    correct_count = 0
 
-    st.markdown("## 🏆 Quiz Results")
+    wrong_count = 0
 
-    col1, col2, col3 = st.columns(3)
+    unanswered_count = 0
 
-    with col1:
-
-        st.metric(
-            "Score",
-            f"{score}/{total}"
-        )
-
-    with col2:
-
-        st.metric(
-            "Percentage",
-            f"{percentage:.0f}%"
-        )
-
-    with col3:
-
-        if percentage >= 80:
-
-            grade = "A"
-
-        elif percentage >= 60:
-
-            grade = "B"
-
-        elif percentage >= 40:
-
-            grade = "C"
-
-        else:
-
-            grade = "D"
-
-        st.metric(
-            "Grade",
-            grade
-        )
-
-
-    # =====================================================
-    # PERFORMANCE
-    # =====================================================
-
-    if percentage >= 90:
-
-        st.success(
-            "🌟 Outstanding! You're a quiz master!"
-        )
-
-        st.balloons()
-
-    elif percentage >= 75:
-
-        st.success(
-            "🎉 Excellent work! Keep going!"
-        )
-
-    elif percentage >= 60:
-
-        st.info(
-            "👍 Good job! Keep practicing."
-        )
-
-    elif percentage >= 40:
-
-        st.warning(
-            "📚 Keep learning. You're improving!"
-        )
-
-    else:
-
-        st.error(
-            "💪 Don't give up. Review and try again!"
-        )
-
-
-    # =====================================================
-    # PERFORMANCE BAR
-    # =====================================================
-
-    st.subheader("📊 Performance")
-
-    st.progress(
-        percentage / 100
-    )
-
-
-    # =====================================================
-    # ANSWER REVIEW
-    # =====================================================
-
-    st.subheader("📖 Answer Review")
 
     for i, question in enumerate(questions):
 
@@ -860,46 +769,299 @@ if (
             )
         )
 
-        st.markdown(
-            f"### Question {i + 1}"
-        )
+        if selected_answer is None:
 
-        st.write(
-            question["question"]
-        )
+            unanswered_count += 1
 
-        if selected_answer == question["answer"]:
+        elif selected_answer == question["answer"]:
 
-            st.success(
-                f"✅ Your answer: {selected_answer}"
-            )
+            correct_count += 1
 
         else:
 
-            st.error(
-                "❌ Your answer: "
-                + (
-                    selected_answer
-                    if selected_answer
-                    else "Not answered"
-                )
+            wrong_count += 1
+
+
+    percentage = (
+        correct_count / total
+    ) * 100
+
+
+    # =====================================================
+    # PERFORMANCE LEVEL
+    # =====================================================
+
+    if percentage >= 90:
+
+        performance = "Outstanding 🌟"
+
+        message = (
+            "Excellent performance! "
+            "You have mastered this quiz."
+        )
+
+    elif percentage >= 75:
+
+        performance = "Excellent 🎉"
+
+        message = (
+            "Great job! Your understanding "
+            "is strong."
+        )
+
+    elif percentage >= 60:
+
+        performance = "Good 👍"
+
+        message = (
+            "Good work! Keep practicing "
+            "to improve further."
+        )
+
+    elif percentage >= 40:
+
+        performance = "Keep Learning 📚"
+
+        message = (
+            "You're making progress. "
+            "Review the explanations and try again."
+        )
+
+    else:
+
+        performance = "Keep Practicing 💪"
+
+        message = (
+            "Don't give up. Every attempt "
+            "helps you improve."
+        )
+
+
+    # =====================================================
+    # GRADE
+    # =====================================================
+
+    if percentage >= 90:
+
+        grade = "A+"
+
+    elif percentage >= 80:
+
+        grade = "A"
+
+    elif percentage >= 70:
+
+        grade = "B"
+
+    elif percentage >= 60:
+
+        grade = "C"
+
+    elif percentage >= 40:
+
+        grade = "D"
+
+    else:
+
+        grade = "F"
+
+
+    # =====================================================
+    # RESULT HEADER
+    # =====================================================
+
+    st.divider()
+
+    st.markdown(
+        "## 🏆 Performance Dashboard"
+    )
+
+    st.markdown(
+        f"""
+        <div class="result-card">
+
+        <div class="big-score">
+        {score}/{total}
+        </div>
+
+        <div class="performance-text">
+        {performance}
+        </div>
+
+        <p>{message}</p>
+
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+    # =====================================================
+    # MAIN METRICS
+    # =====================================================
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+
+        st.metric(
+            "🎯 Accuracy",
+            f"{percentage:.0f}%"
+        )
+
+    with col2:
+
+        st.metric(
+            "✅ Correct",
+            correct_count
+        )
+
+    with col3:
+
+        st.metric(
+            "❌ Wrong",
+            wrong_count
+        )
+
+    with col4:
+
+        st.metric(
+            "⏭️ Unanswered",
+            unanswered_count
+        )
+
+
+    # =====================================================
+    # GRADE
+    # =====================================================
+
+    st.subheader("🏅 Your Grade")
+
+    st.markdown(
+        f"""
+        <div class="result-card">
+
+        <div class="big-score">
+        {grade}
+        </div>
+
+        <p>
+        Final Grade
+        </p>
+
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+    # =====================================================
+    # PERFORMANCE BAR
+    # =====================================================
+
+    st.subheader("📊 Overall Performance")
+
+    st.progress(
+        percentage / 100
+    )
+
+    st.caption(
+        f"You answered {correct_count} "
+        f"out of {total} questions correctly."
+    )
+
+
+    # =====================================================
+    # BREAKDOWN
+    # =====================================================
+
+    st.subheader("📈 Answer Breakdown")
+
+    breakdown_col1, breakdown_col2 = st.columns(2)
+
+    with breakdown_col1:
+
+        st.write(
+            f"✅ Correct: **{correct_count}**"
+        )
+
+        st.write(
+            f"❌ Incorrect: **{wrong_count}**"
+        )
+
+    with breakdown_col2:
+
+        st.write(
+            f"⏭️ Unanswered: **{unanswered_count}**"
+        )
+
+        st.write(
+            f"📝 Total: **{total}**"
+        )
+
+
+    # =====================================================
+    # ANSWER REVIEW
+    # =====================================================
+
+    st.divider()
+
+    st.subheader("📖 Detailed Answer Review")
+
+
+    for i, question in enumerate(questions):
+
+        selected_answer = (
+            st.session_state.get(
+                f"answer_{i}"
+            )
+        )
+
+        with st.expander(
+            f"Question {i + 1}: "
+            f"{question['question']}"
+        ):
+
+            st.write(
+                question["question"]
             )
 
+            if selected_answer is None:
+
+                st.warning(
+                    "⏭️ You did not answer this question."
+                )
+
+            elif selected_answer == question["answer"]:
+
+                st.success(
+                    f"✅ Your answer: "
+                    f"{selected_answer}"
+                )
+
+            else:
+
+                st.error(
+                    f"❌ Your answer: "
+                    f"{selected_answer}"
+                )
+
             st.info(
-                f"Correct answer: "
+                f"✅ Correct answer: "
                 f"{question['answer']}"
             )
 
-        st.write(
-            f"💡 {question['explanation']}"
-        )
-
-        st.divider()
+            st.write(
+                f"💡 Explanation: "
+                f"{question['explanation']}"
+            )
 
 
     # =====================================================
     # NEW QUIZ
     # =====================================================
+
+    st.divider()
 
     if st.button(
         "🔄 Create New Quiz",
@@ -933,3 +1095,4 @@ st.caption(
     "Powered by Gemini AI • "
     "Built with Python & Streamlit"
 )
+    
