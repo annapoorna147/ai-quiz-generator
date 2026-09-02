@@ -1,12 +1,31 @@
 import streamlit as st
+from google import genai
+from google.genai import types
+from dotenv import load_dotenv
 import os
 import json
 import re
+from datetime import datetime
+import pandas as pd
 import time
 
-from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+
+# =========================================================
+# CONFIGURATION
+# =========================================================
+
+load_dotenv()
+
+API_KEY = os.getenv("GEMINI_API_KEY")
+
+if not API_KEY:
+    st.error("❌ GEMINI_API_KEY not found. Please check your .env file.")
+    st.stop()
+
+client = genai.Client(
+    api_key=API_KEY,
+    http_options=types.HttpOptions(timeout=30000)
+)
 
 
 # =========================================================
@@ -16,38 +35,8 @@ from google.genai import types
 st.set_page_config(
     page_title="AI Quiz Generator",
     page_icon="🧠",
-    layout="centered"
+    layout="wide"
 )
-
-
-# =========================================================
-# LOAD ENVIRONMENT
-# =========================================================
-
-load_dotenv()
-
-API_KEY = os.getenv("GEMINI_API_KEY")
-
-if not API_KEY:
-    st.error("❌ Gemini API key not found.")
-    st.info("Please add GEMINI_API_KEY to your .env file.")
-    st.stop()
-
-
-# =========================================================
-# GEMINI CLIENT
-# =========================================================
-
-try:
-    client = genai.Client(
-        api_key=API_KEY,
-        http_options=types.HttpOptions(
-            timeout=30000
-        )
-    )
-except Exception as e:
-    st.error(f"❌ Gemini connection failed: {e}")
-    st.stop()
 
 
 # =========================================================
@@ -59,7 +48,7 @@ st.markdown(
     <style>
 
     .main-title {
-        font-size: 46px;
+        font-size: 42px;
         font-weight: 800;
         text-align: center;
         margin-bottom: 5px;
@@ -67,33 +56,34 @@ st.markdown(
 
     .subtitle {
         text-align: center;
+        color: #777;
         font-size: 18px;
         margin-bottom: 30px;
     }
 
-    .quiz-card {
-        padding: 25px;
-        border-radius: 18px;
-        border: 1px solid rgba(128,128,128,0.25);
-        margin: 20px 0;
-    }
-
-    .result-card {
-        padding: 25px;
-        border-radius: 18px;
-        border: 1px solid rgba(128,128,128,0.25);
-        margin: 20px 0;
+    .stat-card {
+        padding: 20px;
+        border-radius: 15px;
+        border: 1px solid rgba(128,128,128,0.2);
         text-align: center;
+        margin-bottom: 15px;
     }
 
-    .big-score {
-        font-size: 52px;
+    .stat-number {
+        font-size: 30px;
         font-weight: 800;
     }
 
-    .performance-text {
-        font-size: 22px;
-        font-weight: 700;
+    .stat-label {
+        font-size: 14px;
+        color: #777;
+    }
+
+    .question-box {
+        padding: 20px;
+        border-radius: 15px;
+        border: 1px solid rgba(128,128,128,0.2);
+        margin-bottom: 20px;
     }
 
     </style>
@@ -108,94 +98,104 @@ st.markdown(
 
 defaults = {
     "questions": [],
+    "current_question": 0,
+    "answers": {},
     "submitted": False,
     "score": 0,
-    "quiz_started": False,
+    "correct": 0,
+    "wrong": 0,
+    "unanswered": 0,
+    "percentage": 0,
+    "grade": "",
     "start_time": None,
-    "quiz_duration": 300,
-    "topic": "",
-    "difficulty": "Medium",
-    "number_of_questions": 5,
-    "time_per_question": 60,
-    "current_question": 0,
+    "quiz_duration": 0,
+    "history_saved": False,
+    "quiz_history": []
 }
 
 for key, value in defaults.items():
-
     if key not in st.session_state:
         st.session_state[key] = value
 
 
 # =========================================================
-# HEADER
+# HELPER FUNCTIONS
 # =========================================================
 
-st.markdown(
-    '<div class="main-title">🧠 AI Quiz Generator</div>',
-    unsafe_allow_html=True
-)
-
-st.markdown(
-    '<div class="subtitle">Learn • Practice • Improve with AI</div>',
-    unsafe_allow_html=True
-)
+def clear_answer_widgets():
+    """Remove old answer widget states."""
+    for key in list(st.session_state.keys()):
+        if key.startswith("answer_"):
+            del st.session_state[key]
 
 
-# =========================================================
-# GENERATE QUIZ
-# =========================================================
+def get_grade(percentage):
+    if percentage >= 90:
+        return "A+"
+    elif percentage >= 80:
+        return "A"
+    elif percentage >= 70:
+        return "B"
+    elif percentage >= 60:
+        return "C"
+    elif percentage >= 50:
+        return "D"
+    else:
+        return "F"
 
-def generate_quiz(
-    topic,
-    difficulty,
-    number_of_questions
-):
+
+def get_performance_message(percentage):
+    if percentage >= 90:
+        return "🏆 Outstanding performance!"
+    elif percentage >= 80:
+        return "🌟 Excellent work!"
+    elif percentage >= 70:
+        return "👏 Great job!"
+    elif percentage >= 60:
+        return "👍 Good effort! Keep improving."
+    elif percentage >= 50:
+        return "📚 You're getting there. Keep practicing!"
+    else:
+        return "💪 Don't give up. Practice makes progress!"
+
+
+def generate_quiz(topic, difficulty, num_questions):
 
     prompt = f"""
-You are an expert educational quiz creator.
-
 Create a multiple-choice quiz.
 
 Topic: {topic}
-
 Difficulty: {difficulty}
-
-Number of questions: {number_of_questions}
+Number of questions: {num_questions}
 
 Return ONLY valid JSON.
 
-Use exactly this structure:
+Use exactly this format:
 
 [
-    {{
-        "question": "Question text",
-        "options": [
-            "Option A",
-            "Option B",
-            "Option C",
-            "Option D"
-        ],
-        "answer": "Correct option",
-        "explanation": "Short explanation"
-    }}
+  {{
+    "question": "Question text",
+    "options": [
+      "Option A",
+      "Option B",
+      "Option C",
+      "Option D"
+    ],
+    "answer": "Correct option"
+  }}
 ]
 
 Rules:
-
-1. Create exactly {number_of_questions} questions.
-2. Every question must have exactly 4 options.
-3. The correct answer must exactly match one option.
-4. Questions must be relevant to the topic.
-5. Follow the requested difficulty.
-6. Avoid duplicate questions.
-7. Give a short explanation.
-8. Return JSON only.
-9. Do not use Markdown.
-10. Do not add text outside the JSON.
+- Exactly {num_questions} questions
+- Exactly 4 options per question
+- One correct answer
+- The answer must exactly match one of the options
+- No markdown
+- No explanations
+- Return JSON only
 """
 
     try:
-
         response = client.models.generate_content(
             model="gemini-3.6-flash",
             contents=prompt,
@@ -209,453 +209,349 @@ Rules:
 
         text = response.text.strip()
 
-        text = re.sub(
-            r"```json",
-            "",
-            text,
-            flags=re.IGNORECASE
-        )
-
-        text = re.sub(
-            r"```",
-            "",
-            text
-        )
-
+        # Remove accidental markdown fences
+        text = re.sub(r"^```json", "", text)
+        text = re.sub(r"^```", "", text)
+        text = re.sub(r"```$", "", text)
         text = text.strip()
 
-        start = text.find("[")
-        end = text.rfind("]")
+        quiz = json.loads(text)
 
-        if start == -1 or end == -1:
+        if not isinstance(quiz, list):
+            raise ValueError("Invalid quiz format.")
 
-            raise ValueError(
-                "Gemini did not return valid JSON."
-            )
+        if len(quiz) != num_questions:
+            raise ValueError("Incorrect number of questions.")
 
-        text = text[start:end + 1]
+        for q in quiz:
+            if (
+                "question" not in q
+                or "options" not in q
+                or "answer" not in q
+            ):
+                raise ValueError("Invalid question structure.")
 
-        questions = json.loads(text)
+            if len(q["options"]) != 4:
+                raise ValueError("Each question must have 4 options.")
 
-        if not isinstance(questions, list):
+            if q["answer"] not in q["options"]:
+                raise ValueError("Answer does not match an option.")
 
-            raise ValueError(
-                "Invalid quiz format."
-            )
-
-        if len(questions) != number_of_questions:
-
-            raise ValueError(
-                f"Expected {number_of_questions} questions "
-                f"but received {len(questions)}."
-            )
-
-        for question in questions:
-
-            if "question" not in question:
-                raise ValueError(
-                    "Question text is missing."
-                )
-
-            if "options" not in question:
-                raise ValueError(
-                    "Options are missing."
-                )
-
-            if "answer" not in question:
-                raise ValueError(
-                    "Answer is missing."
-                )
-
-            if "explanation" not in question:
-
-                question["explanation"] = (
-                    "This is the correct answer."
-                )
-
-            if len(question["options"]) != 4:
-
-                raise ValueError(
-                    "Every question must have exactly 4 options."
-                )
-
-            if question["answer"] not in question["options"]:
-
-                raise ValueError(
-                    "Correct answer does not match an option."
-                )
-
-        return questions, None
+        return quiz
 
     except Exception as e:
+        st.error(f"❌ Failed to generate quiz: {e}")
+        return []
 
-        return None, str(e)
+
+def calculate_results():
+
+    questions = st.session_state.questions
+    answers = st.session_state.answers
+
+    correct = 0
+    wrong = 0
+    unanswered = 0
+
+    for i, question in enumerate(questions):
+
+        selected = answers.get(i)
+
+        if selected is None:
+            unanswered += 1
+
+        elif selected == question["answer"]:
+            correct += 1
+
+        else:
+            wrong += 1
+
+    total = len(questions)
+
+    percentage = round((correct / total) * 100, 1) if total else 0
+
+    st.session_state.correct = correct
+    st.session_state.wrong = wrong
+    st.session_state.unanswered = unanswered
+    st.session_state.score = correct
+    st.session_state.percentage = percentage
+    st.session_state.grade = get_grade(percentage)
+    st.session_state.submitted = True
+
+
+def save_history():
+
+    if st.session_state.history_saved:
+        return
+
+    questions = st.session_state.questions
+
+    if not questions:
+        return
+
+    # Get topic from session state
+    topic = st.session_state.get("quiz_topic", "Custom Quiz")
+
+    history_entry = {
+        "Date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "Topic": topic,
+        "Difficulty": st.session_state.get("quiz_difficulty", "Unknown"),
+        "Questions": len(questions),
+        "Score": st.session_state.score,
+        "Percentage": st.session_state.percentage,
+        "Grade": st.session_state.grade,
+        "Correct": st.session_state.correct,
+        "Wrong": st.session_state.wrong,
+        "Unanswered": st.session_state.unanswered
+    }
+
+    st.session_state.quiz_history.insert(0, history_entry)
+
+    st.session_state.history_saved = True
+
+
+def start_new_quiz():
+
+    clear_answer_widgets()
+
+    st.session_state.questions = []
+    st.session_state.current_question = 0
+    st.session_state.answers = {}
+    st.session_state.submitted = False
+    st.session_state.score = 0
+    st.session_state.correct = 0
+    st.session_state.wrong = 0
+    st.session_state.unanswered = 0
+    st.session_state.percentage = 0
+    st.session_state.grade = ""
+    st.session_state.start_time = None
+    st.session_state.quiz_duration = 0
+    st.session_state.history_saved = False
 
 
 # =========================================================
-# HOME / DASHBOARD
+# HEADER
 # =========================================================
 
-if not st.session_state.questions:
+st.markdown(
+    '<div class="main-title">🧠 AI Quiz Generator</div>',
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    '<div class="subtitle">Create intelligent quizzes powered by Gemini AI</div>',
+    unsafe_allow_html=True
+)
+
+
+# =========================================================
+# SIDEBAR
+# =========================================================
+
+with st.sidebar:
+
+    st.header("⚙️ Quiz Settings")
+
+    category = st.selectbox(
+        "📚 Category",
+        [
+            "🐍 Python",
+            "💻 Programming",
+            "🧠 Data Structures",
+            "🤖 Artificial Intelligence",
+            "📊 Machine Learning",
+            "🌐 Web Development",
+            "🗄️ Databases",
+            "🔢 Mathematics",
+            "🔬 Science",
+            "🌍 General Knowledge",
+            "✏️ Custom Topic"
+        ]
+    )
+
+    if category == "✏️ Custom Topic":
+
+        custom_topic = st.text_input(
+            "Enter your topic",
+            placeholder="Example: Operating Systems"
+        )
+
+        topic = custom_topic if custom_topic else "General Knowledge"
+
+    else:
+
+        topic = re.sub(
+            r"^[^\w\s]+ ",
+            "",
+            category
+        )
+
+    difficulty = st.selectbox(
+        "🎯 Difficulty",
+        ["Easy", "Medium", "Hard"]
+    )
+
+    num_questions = st.selectbox(
+        "📝 Number of Questions",
+        [3, 5, 7, 10],
+        index=1
+    )
+
+    time_per_question = st.selectbox(
+        "⏱️ Time Per Question",
+        [30, 60, 90, 120],
+        index=1
+    )
+
+    total_time = num_questions * time_per_question
+
+    st.info(
+        f"⏱️ Total quiz time: **{total_time // 60} min "
+        f"{total_time % 60} sec**"
+    )
+
+    generate_button = st.button(
+        "🚀 Generate Quiz",
+        use_container_width=True
+    )
+
+
+# =========================================================
+# GENERATE QUIZ
+# =========================================================
+
+if generate_button:
+
+    clear_answer_widgets()
+
+    with st.spinner("🤖 Generating your quiz..."):
+
+        quiz = generate_quiz(
+            topic,
+            difficulty,
+            num_questions
+        )
+
+    if quiz:
+
+        st.session_state.questions = quiz
+        st.session_state.current_question = 0
+        st.session_state.answers = {}
+        st.session_state.submitted = False
+        st.session_state.score = 0
+        st.session_state.correct = 0
+        st.session_state.wrong = 0
+        st.session_state.unanswered = 0
+        st.session_state.percentage = 0
+        st.session_state.grade = ""
+        st.session_state.quiz_duration = total_time
+        st.session_state.start_time = time.time()
+        st.session_state.history_saved = False
+
+        st.session_state.quiz_topic = topic
+        st.session_state.quiz_difficulty = difficulty
+
+        st.rerun()
+
+
+# =========================================================
+# QUIZ ACTIVE
+# =========================================================
+
+if st.session_state.questions and not st.session_state.submitted:
+
+    questions = st.session_state.questions
+    current = st.session_state.current_question
+    total_questions = len(questions)
+
+    # -----------------------------------------------------
+    # TIMER
+    # -----------------------------------------------------
+
+    elapsed = int(time.time() - st.session_state.start_time)
+    remaining = max(
+        0,
+        st.session_state.quiz_duration - elapsed
+    )
+
+    minutes = remaining // 60
+    seconds = remaining % 60
+
+    if remaining == 0:
+
+        st.warning("⏰ Time's up!")
+
+        calculate_results()
+        save_history()
+
+        st.rerun()
+
+    # -----------------------------------------------------
+    # TOP STATS
+    # -----------------------------------------------------
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric(
+            "Question",
+            f"{current + 1} / {total_questions}"
+        )
+
+    with col2:
+        st.metric(
+            "Progress",
+            f"{int(((current + 1) / total_questions) * 100)}%"
+        )
+
+    with col3:
+        st.metric(
+            "Time Left",
+            f"{minutes:02d}:{seconds:02d}"
+        )
+
+    st.progress(
+        (current + 1) / total_questions
+    )
+
+    st.markdown("---")
+
+    # -----------------------------------------------------
+    # QUESTION
+    # -----------------------------------------------------
+
+    question = questions[current]
 
     st.markdown(
-        """
-        <div class="quiz-card">
-
-        <h3>🚀 Create Your AI-Powered Quiz</h3>
-
-        <p>
-        Choose a topic, difficulty and quiz size.
-        Gemini AI will generate a personalized quiz for you.
-        </p>
-
+        f"""
+        <div class="question-box">
+            <h3>Question {current + 1}</h3>
+            <p>{question["question"]}</p>
         </div>
         """,
         unsafe_allow_html=True
     )
 
-    st.subheader("📚 Choose a Quiz Category")
-
-    categories = [
-        "🐍 Python",
-        "💻 Programming",
-        "🤖 Artificial Intelligence",
-        "🧠 Machine Learning",
-        "📊 Data Science",
-        "🌐 Web Development",
-        "🗄️ Database",
-        "🔐 Cyber Security",
-        "⚡ Electronics",
-        "📐 Mathematics",
-        "🔬 Science",
-        "🌎 General Knowledge"
-    ]
-
-    selected_category = st.selectbox(
-        "Select a category",
-        categories
-    )
-
-    custom_topic = st.text_input(
-        "✏️ Or enter your own topic",
-        placeholder="Example: Operating Systems"
-    )
-
-    category_topic = re.sub(
-        r"^[^\w\s]+ ",
-        "",
-        selected_category
-    )
-
-    if custom_topic.strip():
-
-        final_topic = custom_topic.strip()
-
-    else:
-
-        final_topic = category_topic
-
-
-    # =====================================================
-    # SETTINGS
-    # =====================================================
-
-    st.subheader("⚙️ Quiz Settings")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-
-        difficulty = st.selectbox(
-            "🎯 Difficulty",
-            [
-                "Easy",
-                "Medium",
-                "Hard"
-            ],
-            index=1
-        )
-
-    with col2:
-
-        number_of_questions = st.selectbox(
-            "🔢 Questions",
-            [
-                3,
-                5,
-                7,
-                10
-            ],
-            index=1
-        )
-
-
-    # =====================================================
-    # TIMER
-    # =====================================================
-
-    st.subheader("⏱️ Time Settings")
-
-    time_per_question = st.selectbox(
-        "Time per question",
-        [
-            30,
-            60,
-            90,
-            120
-        ],
-        index=1,
-        format_func=lambda x: f"{x} seconds"
-    )
-
-    total_time = (
-        number_of_questions
-        * time_per_question
-    )
-
-    minutes = total_time // 60
-    seconds = total_time % 60
-
-    st.info(
-        f"⏱️ Total quiz time: "
-        f"{minutes} min {seconds} sec"
-    )
-
-
-    # =====================================================
-    # GENERATE
-    # =====================================================
-
-    if st.button(
-        "🚀 Generate AI Quiz",
-        type="primary",
-        use_container_width=True
-    ):
-
-        if not final_topic.strip():
-
-            st.warning(
-                "⚠️ Please enter a topic."
-            )
-
-        else:
-
-            with st.spinner(
-                "🧠 Gemini AI is creating your quiz..."
-            ):
-
-                questions, error = generate_quiz(
-                    final_topic,
-                    difficulty,
-                    number_of_questions
-                )
-
-            if questions:
-
-                st.session_state.questions = questions
-
-                st.session_state.topic = final_topic
-
-                st.session_state.difficulty = difficulty
-
-                st.session_state.number_of_questions = (
-                    number_of_questions
-                )
-
-                st.session_state.time_per_question = (
-                    time_per_question
-                )
-
-                st.session_state.quiz_duration = (
-                    total_time
-                )
-
-                st.session_state.start_time = time.time()
-
-                st.session_state.quiz_started = True
-
-                st.session_state.submitted = False
-
-                st.session_state.score = 0
-
-                st.session_state.current_question = 0
-
-                st.rerun()
-
-            else:
-
-                st.error(
-                    "❌ Could not generate quiz."
-                )
-
-                st.code(
-                    error
-                    if error
-                    else "Unknown error."
-                )
-
-
-# =========================================================
-# ACTIVE QUIZ
-# =========================================================
-
-if (
-    st.session_state.questions
-    and not st.session_state.submitted
-):
-
-    questions = st.session_state.questions
-
-    total_questions = len(questions)
-
-    current = st.session_state.current_question
-
-
-    # Safety
-    if current < 0:
-
-        current = 0
-
-        st.session_state.current_question = 0
-
-    if current >= total_questions:
-
-        current = total_questions - 1
-
-        st.session_state.current_question = (
-            total_questions - 1
-        )
-
-
-    # =====================================================
-    # HEADER
-    # =====================================================
-
-    st.markdown(
-        f"### 📚 {st.session_state.topic}"
-    )
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-
-        st.caption(
-            f"🎯 {st.session_state.difficulty}"
-        )
-
-    with col2:
-
-        st.caption(
-            f"Question {current + 1} of {total_questions}"
-        )
-
-
-    # =====================================================
-    # TIMER
-    # =====================================================
-
-    elapsed_time = (
-        time.time()
-        - st.session_state.start_time
-    )
-
-    remaining_time = max(
-        0,
-        st.session_state.quiz_duration
-        - int(elapsed_time)
-    )
-
-    minutes = remaining_time // 60
-
-    seconds = remaining_time % 60
-
-
-    if remaining_time > 60:
-
-        st.info(
-            f"⏱️ Time Remaining: "
-            f"{minutes:02d}:{seconds:02d}"
-        )
-
-    elif remaining_time > 0:
-
-        st.warning(
-            f"⚠️ Time Remaining: "
-            f"{minutes:02d}:{seconds:02d}"
-        )
-
-    else:
-
-        st.error(
-            "⏰ Time's up! Please submit your quiz."
-        )
-
-
-    # =====================================================
-    # PROGRESS
-    # =====================================================
-
-    progress = (
-        (current + 1)
-        / total_questions
-    )
-
-    st.progress(progress)
-
-    st.caption(
-        f"Quiz Progress: "
-        f"{current + 1}/{total_questions}"
-    )
-
-
-    # =====================================================
-    # QUESTION
-    # =====================================================
-
-    question = questions[current]
-
-    st.markdown(
-        '<div class="quiz-card">',
-        unsafe_allow_html=True
-    )
-
-    st.markdown(
-        f"### Question {current + 1}"
-    )
-
-    st.write(
-        question["question"]
-    )
-
-    st.markdown(
-        '</div>',
-        unsafe_allow_html=True
-    )
-
-
-    # =====================================================
-    # ANSWER
-    # =====================================================
-
-    st.radio(
+    selected_answer = st.radio(
         "Choose your answer:",
         question["options"],
         index=None,
         key=f"answer_{current}"
     )
 
+    if selected_answer is not None:
 
-    # =====================================================
+        st.session_state.answers[current] = selected_answer
+
+    st.markdown("")
+
+    # -----------------------------------------------------
     # NAVIGATION
-    # =====================================================
+    # -----------------------------------------------------
 
-    st.divider()
+    col1, col2, col3 = st.columns([1, 1, 1])
 
-    nav1, nav2, nav3 = st.columns(
-        [1, 1, 1]
-    )
-
-    with nav1:
+    with col1:
 
         if current > 0:
 
@@ -665,18 +561,13 @@ if (
             ):
 
                 st.session_state.current_question -= 1
-
                 st.rerun()
 
+    with col2:
 
-    with nav2:
+        st.write("")
 
-        st.write(
-            f"**{current + 1} / {total_questions}**"
-        )
-
-
-    with nav3:
+    with col3:
 
         if current < total_questions - 1:
 
@@ -686,413 +577,256 @@ if (
             ):
 
                 st.session_state.current_question += 1
-
                 st.rerun()
-
-
-    # =====================================================
-    # SUBMIT
-    # =====================================================
-
-    if current == total_questions - 1:
-
-        if st.button(
-            "🏁 Submit Quiz",
-            type="primary",
-            use_container_width=True
-        ):
-
-            score = 0
-
-            for i, q in enumerate(questions):
-
-                selected_answer = (
-                    st.session_state.get(
-                        f"answer_{i}"
-                    )
-                )
-
-                if selected_answer == q["answer"]:
-
-                    score += 1
-
-            st.session_state.score = score
-
-            st.session_state.submitted = True
-
-            st.rerun()
-
-
-    # =====================================================
-    # TIMER REFRESH
-    # =====================================================
-
-    if remaining_time > 0:
-
-        time.sleep(1)
-
-        st.rerun()
-
-
-# =========================================================
-# DAY 6 PERFORMANCE DASHBOARD
-# =========================================================
-
-if (
-    st.session_state.questions
-    and st.session_state.submitted
-):
-
-    questions = st.session_state.questions
-
-    total = len(questions)
-
-    score = st.session_state.score
-
-
-    # =====================================================
-    # CALCULATE PERFORMANCE
-    # =====================================================
-
-    correct_count = 0
-
-    wrong_count = 0
-
-    unanswered_count = 0
-
-
-    for i, question in enumerate(questions):
-
-        selected_answer = (
-            st.session_state.get(
-                f"answer_{i}"
-            )
-        )
-
-        if selected_answer is None:
-
-            unanswered_count += 1
-
-        elif selected_answer == question["answer"]:
-
-            correct_count += 1
 
         else:
 
-            wrong_count += 1
+            if st.button(
+                "🏁 Submit Quiz",
+                use_container_width=True
+            ):
+
+                calculate_results()
+                save_history()
+
+                st.rerun()
+
+    # -----------------------------------------------------
+    # AUTO REFRESH TIMER
+    # -----------------------------------------------------
+
+    time.sleep(1)
+    st.rerun()
 
 
-    percentage = (
-        correct_count / total
-    ) * 100
+# =========================================================
+# RESULTS
+# =========================================================
 
+elif st.session_state.submitted:
 
-    # =====================================================
-    # PERFORMANCE LEVEL
-    # =====================================================
+    save_history()
 
-    if percentage >= 90:
+    st.success("🎉 Quiz Completed!")
 
-        performance = "Outstanding 🌟"
+    st.markdown("## 📊 Performance Dashboard")
 
-        message = (
-            "Excellent performance! "
-            "You have mastered this quiz."
-        )
-
-    elif percentage >= 75:
-
-        performance = "Excellent 🎉"
-
-        message = (
-            "Great job! Your understanding "
-            "is strong."
-        )
-
-    elif percentage >= 60:
-
-        performance = "Good 👍"
-
-        message = (
-            "Good work! Keep practicing "
-            "to improve further."
-        )
-
-    elif percentage >= 40:
-
-        performance = "Keep Learning 📚"
-
-        message = (
-            "You're making progress. "
-            "Review the explanations and try again."
-        )
-
-    else:
-
-        performance = "Keep Practicing 💪"
-
-        message = (
-            "Don't give up. Every attempt "
-            "helps you improve."
-        )
-
-
-    # =====================================================
-    # GRADE
-    # =====================================================
-
-    if percentage >= 90:
-
-        grade = "A+"
-
-    elif percentage >= 80:
-
-        grade = "A"
-
-    elif percentage >= 70:
-
-        grade = "B"
-
-    elif percentage >= 60:
-
-        grade = "C"
-
-    elif percentage >= 40:
-
-        grade = "D"
-
-    else:
-
-        grade = "F"
-
-
-    # =====================================================
-    # RESULT HEADER
-    # =====================================================
-
-    st.divider()
-
-    st.markdown(
-        "## 🏆 Performance Dashboard"
-    )
-
-    st.markdown(
-        f"""
-        <div class="result-card">
-
-        <div class="big-score">
-        {score}/{total}
-        </div>
-
-        <div class="performance-text">
-        {performance}
-        </div>
-
-        <p>{message}</p>
-
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-
-    # =====================================================
-    # MAIN METRICS
-    # =====================================================
+    # -----------------------------------------------------
+    # MAIN STATS
+    # -----------------------------------------------------
 
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
 
         st.metric(
-            "🎯 Accuracy",
-            f"{percentage:.0f}%"
+            "🏆 Score",
+            f"{st.session_state.score} / {len(st.session_state.questions)}"
         )
 
     with col2:
 
         st.metric(
-            "✅ Correct",
-            correct_count
+            "📈 Percentage",
+            f"{st.session_state.percentage}%"
         )
 
     with col3:
 
         st.metric(
-            "❌ Wrong",
-            wrong_count
+            "🎯 Grade",
+            st.session_state.grade
         )
 
     with col4:
 
         st.metric(
-            "⏭️ Unanswered",
-            unanswered_count
+            "✅ Correct",
+            st.session_state.correct
         )
-
-
-    # =====================================================
-    # GRADE
-    # =====================================================
-
-    st.subheader("🏅 Your Grade")
-
-    st.markdown(
-        f"""
-        <div class="result-card">
-
-        <div class="big-score">
-        {grade}
-        </div>
-
-        <p>
-        Final Grade
-        </p>
-
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-
-    # =====================================================
-    # PERFORMANCE BAR
-    # =====================================================
-
-    st.subheader("📊 Overall Performance")
 
     st.progress(
-        percentage / 100
+        st.session_state.percentage / 100
     )
 
-    st.caption(
-        f"You answered {correct_count} "
-        f"out of {total} questions correctly."
+    st.markdown(
+        f"### {get_performance_message(st.session_state.percentage)}"
     )
 
+    # -----------------------------------------------------
+    # ANSWER BREAKDOWN
+    # -----------------------------------------------------
 
-    # =====================================================
-    # BREAKDOWN
-    # =====================================================
+    st.markdown("### 📋 Answer Breakdown")
 
-    st.subheader("📈 Answer Breakdown")
+    col1, col2, col3 = st.columns(3)
 
-    breakdown_col1, breakdown_col2 = st.columns(2)
+    with col1:
 
-    with breakdown_col1:
-
-        st.write(
-            f"✅ Correct: **{correct_count}**"
+        st.metric(
+            "✅ Correct",
+            st.session_state.correct
         )
 
-        st.write(
-            f"❌ Incorrect: **{wrong_count}**"
+    with col2:
+
+        st.metric(
+            "❌ Wrong",
+            st.session_state.wrong
         )
 
-    with breakdown_col2:
+    with col3:
 
-        st.write(
-            f"⏭️ Unanswered: **{unanswered_count}**"
+        st.metric(
+            "⚪ Unanswered",
+            st.session_state.unanswered
         )
 
-        st.write(
-            f"📝 Total: **{total}**"
-        )
+    # -----------------------------------------------------
+    # REVIEW
+    # -----------------------------------------------------
 
+    st.markdown("### 🔍 Detailed Review")
 
-    # =====================================================
-    # ANSWER REVIEW
-    # =====================================================
+    for i, question in enumerate(
+        st.session_state.questions
+    ):
 
-    st.divider()
-
-    st.subheader("📖 Detailed Answer Review")
-
-
-    for i, question in enumerate(questions):
-
-        selected_answer = (
-            st.session_state.get(
-                f"answer_{i}"
-            )
-        )
+        selected = st.session_state.answers.get(i)
 
         with st.expander(
-            f"Question {i + 1}: "
-            f"{question['question']}"
+            f"Question {i + 1}: {question['question']}"
         ):
 
-            st.write(
-                question["question"]
-            )
-
-            if selected_answer is None:
-
-                st.warning(
-                    "⏭️ You did not answer this question."
-                )
-
-            elif selected_answer == question["answer"]:
+            if selected == question["answer"]:
 
                 st.success(
-                    f"✅ Your answer: "
-                    f"{selected_answer}"
+                    f"✅ Your answer: {selected}"
+                )
+
+            elif selected is None:
+
+                st.warning(
+                    "⚪ You did not answer this question."
                 )
 
             else:
 
                 st.error(
-                    f"❌ Your answer: "
-                    f"{selected_answer}"
+                    f"❌ Your answer: {selected}"
                 )
 
-            st.info(
-                f"✅ Correct answer: "
-                f"{question['answer']}"
-            )
+                st.info(
+                    f"✅ Correct answer: {question['answer']}"
+                )
 
-            st.write(
-                f"💡 Explanation: "
-                f"{question['explanation']}"
-            )
-
-
-    # =====================================================
+    # -----------------------------------------------------
     # NEW QUIZ
-    # =====================================================
+    # -----------------------------------------------------
 
-    st.divider()
+    st.markdown("")
 
     if st.button(
-        "🔄 Create New Quiz",
-        type="primary",
+        "🔄 Start New Quiz",
         use_container_width=True
     ):
 
-        st.session_state.questions = []
-
-        st.session_state.submitted = False
-
-        st.session_state.score = 0
-
-        st.session_state.quiz_started = False
-
-        st.session_state.start_time = None
-
-        st.session_state.current_question = 0
-
+        start_new_quiz()
         st.rerun()
 
 
 # =========================================================
-# FOOTER
+# QUIZ HISTORY
 # =========================================================
 
 st.markdown("---")
 
-st.caption(
-    "🧠 AI Quiz Generator • "
-    "Powered by Gemini AI • "
-    "Built with Python & Streamlit"
-)
-    
+st.markdown("## 📚 Quiz History")
+
+history = st.session_state.quiz_history
+
+if not history:
+
+    st.info(
+        "Your completed quizzes will appear here."
+    )
+
+else:
+
+    # -----------------------------------------------------
+    # HISTORY STATISTICS
+    # -----------------------------------------------------
+
+    total_attempts = len(history)
+
+    average_percentage = round(
+        sum(item["Percentage"] for item in history)
+        / total_attempts,
+        1
+    )
+
+    best_percentage = max(
+        item["Percentage"] for item in history
+    )
+
+    total_questions = sum(
+        item["Questions"] for item in history
+    )
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+
+        st.metric(
+            "📝 Attempts",
+            total_attempts
+        )
+
+    with col2:
+
+        st.metric(
+            "📊 Average",
+            f"{average_percentage}%"
+        )
+
+    with col3:
+
+        st.metric(
+            "🏆 Best Score",
+            f"{best_percentage}%"
+        )
+
+    with col4:
+
+        st.metric(
+            "❓ Questions",
+            total_questions
+        )
+
+    st.markdown("### 📖 Previous Attempts")
+
+    history_df = pd.DataFrame(history)
+
+    st.dataframe(
+        history_df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # -----------------------------------------------------
+    # CLEAR HISTORY
+    # -----------------------------------------------------
+
+    st.markdown("")
+
+    if st.button(
+        "🗑️ Clear Quiz History"
+    ):
+
+        st.session_state.quiz_history = []
+
+        st.success(
+            "Quiz history cleared."
+        )
+
+        st.rerun()
