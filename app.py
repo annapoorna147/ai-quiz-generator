@@ -29,7 +29,7 @@ if not API_KEY:
 try:
     client = genai.Client(
         api_key=API_KEY,
-        http_options=types.HttpOptions(timeout=30000)
+        http_options=types.HttpOptions(timeout=120000)
     )
 except Exception:
     st.error(
@@ -291,7 +291,7 @@ Rules:
     try:
 
         response = client.models.generate_content(
-            model="gemini-3.6-flash",
+            model="gemini-3.1-flash-lite",
             contents=prompt,
             config=types.GenerateContentConfig(
                 thinking_config=types.ThinkingConfig(
